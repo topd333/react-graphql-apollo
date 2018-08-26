@@ -1,31 +1,66 @@
-const { GraphQLServer } = require('graphql-yoga')
-const { startDB, models }  = require('./db')
-const resolvers = require('./graphql/resolvers')
+import React from 'react'
+import ReactDOM from 'react-dom'
+import { ApolloProvider } from 'react-apollo'
+import { ApolloClient } from 'apollo-client'
+import { createHttpLink } from 'apollo-link-http'
+import { InMemoryCache } from 'apollo-cache-inmemory'
+import { BrowserRouter } from 'react-router-dom'
+import { AUTH_TOKEN } from './constants'
+import { setContext } from 'apollo-link-context'
+import { split } from 'apollo-link'
+import { WebSocketLink } from 'apollo-link-ws'
+import { getMainDefinition } from 'apollo-utilities'
 
-const db = startDB({
-  user: 'admin',
-  pwd: 'admin',
-  db: 'graphql',
-  url: 'localhost:27017'
+import 'bootstrap/dist/css/bootstrap.css'
+import './styles/index.css'
+
+import App from './components/App'
+import registerServiceWorker from './registerServiceWorker'
+
+const httpLink = createHttpLink({
+  uri: 'http://localhost:4000',
 })
 
-const context = {
-  models,
-  db,
-}
-
-const Server = new GraphQLServer({
-  typeDefs: `${__dirname}/graphql/schema.graphql`,
-  resolvers,
-  context,
+const authLink = setContext((_, { headers }) => {
+  const token = localStorage.getItem(AUTH_TOKEN)
+  return {
+    headers: {
+      ...headers,
+      authorization: token ? `Bearer ${token}` : '',
+    },
+  }
 })
 
-// options
-const opts = {
-  port: 4000,
-}
-
-
-Server.start(opts, () => {
-  console.log(`Server is running on http://localhost:${opts.port}`)
+const wsLink = new WebSocketLink({
+  uri: `ws://localhost:4000`,
+  options: {
+    reconnect: true,
+    connectionParams: {
+      authToken: localStorage.getItem(AUTH_TOKEN),
+    },
+  },
 })
+
+const link = split(
+  ({ query }) => {
+    const { kind, operation } = getMainDefinition(query)
+    return kind === 'OperationDefinition' && operation === 'subscription'
+  },
+  wsLink,
+  authLink.concat(httpLink),
+)
+
+const client = new ApolloClient({
+  link,
+  cache: new InMemoryCache(),
+})
+
+ReactDOM.render(
+  <BrowserRouter>
+    <ApolloProvider client={client}>
+      <App />
+    </ApolloProvider>
+  </BrowserRouter>,
+  document.getElementById('root'),
+)
+registerServiceWorker()
